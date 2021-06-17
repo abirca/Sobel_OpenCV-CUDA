@@ -29,8 +29,8 @@ __global__ void sobelFilterGPU(unsigned char* srcImg, unsigned char* dstImg, con
 
 int main(int argc, char * argv[]){
     if(argc != 2){
-        std::cout << argv[0] << "Invalid number of command line arguments. Exiting program" << std::endl;
-        std::cout << "Usage: " << argv[0] << " [image.png]"<< std::endl;
+        std::cout << argv[0] << "Número de argumentos de línea de comando no válido. Salir del programa" << std::endl;
+        std::cout << "Uso: " << argv[0] << " [image.png]"<< std::endl;
         return 1;
     }
     // Verifica las versiones de GPU, CUDA y OpenCV.
