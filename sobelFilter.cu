@@ -9,12 +9,12 @@
 #include <opencv2/core/utility.hpp>
 
 // Numero de hilos por bloque
-#define threadsNumber 30.0 
+#define NumeroHilos 30.0 
 
-void sobelFilterCPU(cv::Mat srcImg, cv::Mat dstImg, const unsigned int width, const unsigned int height);
-void sobelFilterOpenCV(cv::Mat srcImg, cv::Mat dstImg);
+void sobelFiltroCPU(cv::Mat srcImg, cv::Mat dstImg, const unsigned int width, const unsigned int height);
+void sobelFiltroOpenCV(cv::Mat srcImg, cv::Mat dstImg);
 
-__global__ void sobelFilterGPU(unsigned char* srcImg, unsigned char* dstImg, const unsigned int width, const unsigned int height){
+__global__ void sobelFiltroGPU(unsigned char* srcImg, unsigned char* dstImg, const unsigned int width, const unsigned int height){
     int x = threadIdx.x + blockIdx.x * blockDim.x;
     int y = threadIdx.y + blockIdx.y * blockDim.y;
     if( x > 0 && y > 0 && x < width-1 && y < height-1) {
@@ -44,7 +44,7 @@ int main(int argc, char * argv[]){
     std::cout << timeBuffer << std::endl;
     
     std::cout << "GPU: " << deviceProp.name << ", CUDA "<< deviceProp.major << "."<< deviceProp.minor <<", "<< deviceProp.totalGlobalMem / 1048576 << 
-                " Mbytes " <<std::endl; //<< cores << " CUDA cores\n" <<std::endl;
+                " Mbytes " <<std::endl; 
     std::cout << "OpenCV Version: " << CV_VERSION << std::endl;
     
     // Cargar imagen y la transforma a escala de grises
@@ -55,17 +55,18 @@ int main(int argc, char * argv[]){
 
     unsigned char *gpu_src, *gpu_sobel;
     auto start_time = std::chrono::system_clock::now();
-    // ---START CPU
-    sobelFilterCPU(srcImg, sobel_cpu, srcImg.cols, srcImg.rows);
-    std::chrono::duration<double> time_cpu = std::chrono::system_clock::now() - start_time;    
-    // ---END CPU
-    
+        
     // ---START OPENCV
     start_time = std::chrono::system_clock::now();
-    sobelFilterOpenCV(srcImg, sobel_opencv);
+    sobelFiltroOpenCV(srcImg, sobel_opencv);
     std::chrono::duration<double> time_opencv = std::chrono::system_clock::now() - start_time;    
     // ---END OPENCV
 
+	// ---START CPU
+    sobelFiltroCPU(srcImg, sobel_cpu, srcImg.cols, srcImg.rows);
+    std::chrono::duration<double> time_cpu = std::chrono::system_clock::now() - start_time;    
+    // ---END CPU
+	
     // ---SETUP GPU
     // Eventos
     cudaEvent_t start, stop;
@@ -83,18 +84,18 @@ int main(int argc, char * argv[]){
     cudaMemset(gpu_sobel, 0, (srcImg.cols*srcImg.rows));
 
     // configura los dim3 para que el gpu los use como argumentos, hilos por bloque y número de bloques
-    dim3 threadsPerBlock(threadsNumber, threadsNumber, 1);
-    dim3 numBlocks(ceil(srcImg.cols/threadsNumber), ceil(srcImg.rows/threadsNumber), 1);
+    dim3 threadsPerBlock(NumeroHilos, NumeroHilos, 1);
+    dim3 numBlocks(ceil(srcImg.cols/NumeroHilos), ceil(srcImg.rows/NumeroHilos), 1);
     
     // ---START GPU
     // Ejecutar el filtro sobel utilizando la GPU.
     cudaEventRecord(start);
     start_time = std::chrono::system_clock::now();
-    sobelFilterGPU<<< numBlocks, threadsPerBlock, 0, stream >>>(gpu_src, gpu_sobel, srcImg.cols, srcImg.rows);
-    cudaError_t cudaerror = cudaDeviceSynchronize(); // waits for completion, returns error code
+    sobelFiltroGPU<<< numBlocks, threadsPerBlock, 0, stream >>>(gpu_src, gpu_sobel, srcImg.cols, srcImg.rows);
+    cudaError_t cudaerror = cudaDeviceSynchronize(); 
     // if error, output error
     if ( cudaerror != cudaSuccess ) 
-        std::cout <<  "Cuda failed to synchronize: " << cudaGetErrorName( cudaerror ) <<std::endl;
+        std::cout <<  "Cuda no se pudo sincronizar: " << cudaGetErrorName( cudaerror ) <<std::endl;
     std::chrono::duration<double> time_gpu = std::chrono::system_clock::now() - start_time;
     // ---END GPU
     
@@ -114,14 +115,24 @@ int main(int argc, char * argv[]){
     std::cout << "CUDA execution time   = " << 1000*time_gpu.count() <<" msec"<<std::endl;
     
     // Guarda resultados
-    cv::imwrite("outImgCPU.png",sobel_cpu);    
-    cv::imwrite("outImgOpenCV.png",sobel_opencv);
-    cv::imwrite("outImgGPU.png",srcImg);
+	cv::imwrite("ResultadoGPU.png",srcImg);
+    cv::imwrite("ResultadoCPU.png",sobel_cpu);    
+    cv::imwrite("ResultadoOpenCV.png",sobel_opencv);
+    
 
     return 0;
 }
 
-void sobelFilterCPU(cv::Mat srcImg, cv::Mat dstImg, const unsigned int width, const unsigned int height){
+void sobelFiltroOpenCV(cv::Mat srcImg, cv::Mat dstImg){
+    cv::Mat grad_x, grad_y, abs_grad_x, abs_grad_y;
+    cv::Sobel(srcImg, grad_x, CV_16S, 1, 0, 3, 1, 0, cv::BORDER_DEFAULT);
+    cv::convertScaleAbs(grad_x, abs_grad_x);
+    cv::Sobel(srcImg, grad_y, CV_16S, 0, 1, 3, 1, 0, cv::BORDER_DEFAULT);
+    cv::convertScaleAbs(grad_y, abs_grad_y);
+    addWeighted( abs_grad_x, 0.5, abs_grad_y, 0.5, 0, dstImg );
+}
+
+void sobelFiltroCPU(cv::Mat srcImg, cv::Mat dstImg, const unsigned int width, const unsigned int height){
     for(int y = 1; y < srcImg.rows-1; y++) {
         for(int x = 1; x < srcImg.cols-1; x++) {
             float dx = (-1*srcImg.data[(y-1)*width + (x-1)]) + (-2*srcImg.data[y*width+(x-1)]) + (-1*srcImg.data[(y+1)*width+(x-1)]) +
@@ -133,16 +144,4 @@ void sobelFilterCPU(cv::Mat srcImg, cv::Mat dstImg, const unsigned int width, co
             dstImg.at<uchar>(y,x) = sqrt( (dx*dx) + (dy*dy) ) > 255 ? 255 : sqrt( (dx*dx) + (dy*dy) );
         }
     }
-}
-
-void sobelFilterOpenCV(cv::Mat srcImg, cv::Mat dstImg){
-    cv::Mat grad_x, grad_y, abs_grad_x, abs_grad_y;
-    // Gradiente X
-    cv::Sobel(srcImg, grad_x, CV_16S, 1, 0, 3, 1, 0, cv::BORDER_DEFAULT);
-    cv::convertScaleAbs(grad_x, abs_grad_x);
-    // Gradiente Y
-    cv::Sobel(srcImg, grad_y, CV_16S, 0, 1, 3, 1, 0, cv::BORDER_DEFAULT);
-    cv::convertScaleAbs(grad_y, abs_grad_y);
-    // Une los gradientes 
-    addWeighted( abs_grad_x, 0.5, abs_grad_y, 0.5, 0, dstImg );
 }
